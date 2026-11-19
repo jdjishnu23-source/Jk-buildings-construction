@@ -1,0 +1,279 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidMonthKey(m) {
+      return m is string && m.size() == 7 && m.matches('^20[0-9]{2}-(0[1-9]|1[0-2])$');
+    }
+
+    function isValidDateStr(d) {
+      return d is string && d.size() == 10 && d.matches('^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$');
+    }
+
+    function isNonNegNumber(n) {
+      return (n is int || n is float) && n >= 0 && n <= 100000000;
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'designation', 'companyName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'phone', 'designation', 'companyName', 'companyAddress', 'companyMobile', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid == request.auth.uid && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 120
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
+        && data.designation is string && data.designation.size() >= 1 && data.designation.size() <= 60
+        && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+        && (!('companyAddress' in data) || (data.companyAddress is string && data.companyAddress.size() <= 200))
+        && (!('companyMobile' in data) || (data.companyMobile is string && data.companyMobile.size() <= 60))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorker(data) {
+      return data.keys().hasAll(['ownerId', 'employeeId', 'name', 'designation', 'department', 'siteProject', 'dailyRate', 'otHourlyRate', 'defaultAllowance', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'employeeId', 'name', 'designation', 'department', 'siteProject', 'dailyRate', 'otHourlyRate', 'defaultAllowance', 'phone', 'status', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.designation is string && data.designation.size() >= 1 && data.designation.size() <= 60
+        && data.department is string && data.department.size() >= 1 && data.department.size() <= 60
+        && data.siteProject is string && data.siteProject.size() >= 1 && data.siteProject.size() <= 100
+        && isNonNegNumber(data.dailyRate)
+        && isNonNegNumber(data.otHourlyRate)
+        && isNonNegNumber(data.defaultAllowance)
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
+        && data.status in ['active', 'inactive']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkLog(data) {
+      return data.keys().hasAll(['ownerId', 'workerId', 'workerName', 'monthKey', 'date', 'dayUnits', 'inTime', 'outTime', 'otHours', 'pCash', 'signature', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'workerId', 'workerName', 'monthKey', 'date', 'siteProject', 'dayUnits', 'inTime', 'outTime', 'otHours', 'pCash', 'signature', 'notes', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.workerId is string && isValidId(data.workerId)
+        && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 80
+        && isValidMonthKey(data.monthKey)
+        && isValidDateStr(data.date)
+        && (!('siteProject' in data) || (data.siteProject is string && data.siteProject.size() <= 100))
+        && (data.dayUnits is int || data.dayUnits is float) && data.dayUnits >= 0 && data.dayUnits <= 2
+        && data.inTime is string && data.inTime.size() <= 16
+        && data.outTime is string && data.outTime.size() <= 16
+        && (data.otHours is int || data.otHours is float) && data.otHours >= 0 && data.otHours <= 24
+        && isNonNegNumber(data.pCash)
+        && data.signature is string && data.signature.size() <= 60
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 200))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMonthlyAdjustment(data) {
+      return data.keys().hasAll(['ownerId', 'workerId', 'monthKey', 'allowances', 'extraAdvance', 'paymentDate', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'workerId', 'monthKey', 'allowances', 'extraAdvance', 'paymentDate', 'remarks', 'department', 'project', 'createdAt', 'updatedAt'])
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.workerId is string && isValidId(data.workerId)
+        && isValidMonthKey(data.monthKey)
+        && isNonNegNumber(data.allowances)
+        && isNonNegNumber(data.extraAdvance)
+        && data.paymentDate is string && data.paymentDate.size() <= 20
+        && (!('remarks' in data) || (data.remarks is string && data.remarks.size() <= 300))
+        && (!('department' in data) || (data.department is string && data.department.size() <= 60))
+        && (!('project' in data) || (data.project is string && data.project.size() <= 100))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAttendanceLogMap(item) {
+      return item is map
+        && item.keys().hasAll(['date', 'name', 'inTime', 'outTime', 'pCash', 'signature', 'dayUnits'])
+        && item.keys().hasOnly(['date', 'name', 'inTime', 'outTime', 'pCash', 'signature', 'dayUnits', 'otHours', 'notes'])
+        && item.date is string && item.date.size() <= 16
+        && item.name is string && item.name.size() <= 80
+        && item.inTime is string && item.inTime.size() <= 16
+        && item.outTime is string && item.outTime.size() <= 16
+        && isNonNegNumber(item.pCash)
+        && item.signature is string && item.signature.size() <= 60
+        && (item.dayUnits is int || item.dayUnits is float) && item.dayUnits >= 0 && item.dayUnits <= 2;
+    }
+
+    function isValidSharedReport(data, tokenParam) {
+      return data.keys().hasAll(['shareToken', 'ownerId', 'workerId', 'monthKey', 'companyName', 'employeeName', 'employeeId', 'designation', 'monthLabel', 'year', 'daysWorked', 'dailyRate', 'otHours', 'basicSalary', 'allowances', 'overtimePay', 'grossSalary', 'totalAdvance', 'netSalaryPayable', 'attendanceLogs', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['shareToken', 'ownerId', 'workerId', 'monthKey', 'companyName', 'companyAddress', 'companyMobile', 'employeeName', 'employeeId', 'designation', 'department', 'siteProject', 'monthLabel', 'year', 'paymentDate', 'daysWorked', 'dailyRate', 'otHours', 'basicSalary', 'allowances', 'overtimePay', 'grossSalary', 'totalAdvance', 'netSalaryPayable', 'remarks', 'attendanceLogs', 'createdAt', 'updatedAt'])
+        && data.shareToken is string && data.shareToken == tokenParam && data.shareToken.size() >= 20 && data.shareToken.size() <= 64
+        && data.ownerId is string && data.ownerId == request.auth.uid && isValidId(data.ownerId)
+        && data.workerId is string && isValidId(data.workerId)
+        && isValidMonthKey(data.monthKey)
+        && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+        && (!('companyAddress' in data) || (data.companyAddress is string && data.companyAddress.size() <= 200))
+        && (!('companyMobile' in data) || (data.companyMobile is string && data.companyMobile.size() <= 60))
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 80
+        && data.employeeId is string && data.employeeId.size() >= 1 && data.employeeId.size() <= 32
+        && data.designation is string && data.designation.size() >= 1 && data.designation.size() <= 60
+        && (!('department' in data) || (data.department is string && data.department.size() <= 60))
+        && (!('siteProject' in data) || (data.siteProject is string && data.siteProject.size() <= 100))
+        && data.monthLabel is string && data.monthLabel.size() >= 1 && data.monthLabel.size() <= 30
+        && data.year is string && data.year.size() == 4
+        && (!('paymentDate' in data) || (data.paymentDate is string && data.paymentDate.size() <= 20))
+        && isNonNegNumber(data.daysWorked)
+        && isNonNegNumber(data.dailyRate)
+        && isNonNegNumber(data.otHours)
+        && isNonNegNumber(data.basicSalary)
+        && isNonNegNumber(data.allowances)
+        && isNonNegNumber(data.overtimePay)
+        && isNonNegNumber(data.grossSalary)
+        && isNonNegNumber(data.totalAdvance)
+        && (data.netSalaryPayable is int || data.netSalaryPayable is float) && data.netSalaryPayable >= -100000000 && data.netSalaryPayable <= 100000000
+        && (!('remarks' in data) || (data.remarks is string && data.remarks.size() <= 300))
+        && data.attendanceLogs is list && data.attendanceLogs.size() <= 45
+        && (data.attendanceLogs.size() == 0 || isValidAttendanceLogMap(data.attendanceLogs[0]))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. Contractor / User Profiles (Strict Owner-Only PII Isolation)
+    match /users/{uid} {
+      allow get: if isSignedIn() && isValidId(uid) && request.auth.uid == uid;
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(uid)
+        && request.auth.uid == uid
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'phone', 'designation', 'companyName', 'companyAddress', 'companyMobile', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // 2. Registered Workers
+    match /workers/{workerId} {
+      allow get: if isSignedIn() && isValidId(workerId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(workerId)
+        && isValidWorker(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser()
+        && isValidId(workerId)
+        && existing().ownerId == request.auth.uid
+        && isValidWorker(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['employeeId', 'name', 'designation', 'department', 'siteProject', 'dailyRate', 'otHourlyRate', 'defaultAllowance', 'phone', 'status', 'updatedAt'])
+        );
+      allow delete: if isVerifiedUser() && isValidId(workerId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 3. Daily Work Logs (Attendance, In/Out, P.Cash, Signature)
+    match /workLogs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(logId)
+        && isValidWorkLog(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/workers/$(incoming().workerId))
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.ownerId == request.auth.uid;
+      allow update: if isVerifiedUser()
+        && isValidId(logId)
+        && existing().ownerId == request.auth.uid
+        && isValidWorkLog(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().workerId == existing().workerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['workerName', 'monthKey', 'date', 'siteProject', 'dayUnits', 'inTime', 'outTime', 'otHours', 'pCash', 'signature', 'notes', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidId(logId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 4. Monthly Adjustments
+    match /monthlyAdjustments/{adjustmentId} {
+      allow get: if isSignedIn() && isValidId(adjustmentId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(adjustmentId)
+        && isValidMonthlyAdjustment(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/workers/$(incoming().workerId))
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.ownerId == request.auth.uid;
+      allow update: if isVerifiedUser()
+        && isValidId(adjustmentId)
+        && existing().ownerId == request.auth.uid
+        && isValidMonthlyAdjustment(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().workerId == existing().workerId
+        && incoming().monthKey == existing().monthKey
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['allowances', 'extraAdvance', 'paymentDate', 'remarks', 'department', 'project', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidId(adjustmentId) && existing().ownerId == request.auth.uid;
+    }
+
+    // 5. Read-Only Published QR Shared Reports (Workers can ONLY get by exact unguessable token; cannot list or edit)
+    match /sharedReports/{shareToken} {
+      allow get: if isValidId(shareToken) && shareToken.size() >= 20;
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(shareToken)
+        && shareToken.size() >= 20
+        && isValidSharedReport(incoming(), shareToken)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/workers/$(incoming().workerId))
+        && get(/databases/$(database)/documents/workers/$(incoming().workerId)).data.ownerId == request.auth.uid;
+      allow update: if isVerifiedUser()
+        && isValidId(shareToken)
+        && shareToken.size() >= 20
+        && existing().ownerId == request.auth.uid
+        && isValidSharedReport(incoming(), shareToken)
+        && incoming().shareToken == existing().shareToken
+        && incoming().ownerId == existing().ownerId
+        && incoming().workerId == existing().workerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['monthKey', 'companyName', 'companyAddress', 'companyMobile', 'employeeName', 'employeeId', 'designation', 'department', 'siteProject', 'monthLabel', 'year', 'paymentDate', 'daysWorked', 'dailyRate', 'otHours', 'basicSalary', 'allowances', 'overtimePay', 'grossSalary', 'totalAdvance', 'netSalaryPayable', 'remarks', 'attendanceLogs', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidId(shareToken) && existing().ownerId == request.auth.uid;
+    }
+  }
+}

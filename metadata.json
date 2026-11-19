@@ -1,0 +1,6 @@
+{
+  "name": "JK Dream Construction — Labour Payroll & Attendance Portal",
+  "description": "Official labour registration, daily work & petty cash logging, monthly Pay Sheet & Individual Salary Pay Sheet generator with read-only QR verification links.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
